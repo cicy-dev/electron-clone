@@ -211,15 +211,20 @@ const path = require('path');
 const app = express();
 
 app.use(express.static(path.join(__dirname, 'static')));
+app.use('/api-mock', express.static(path.join(__dirname, 'api-mock')));
+app.use('/api-decrypted', express.static(path.join(__dirname, 'api-decrypted')));
 
 const routes = ${JSON.stringify(apiRoutes, null, 2)};
 for (const r of routes) {
   const h = (req, res) => {
-    const f = path.join(__dirname, 'api-mock', r.file);
-    if (fs.existsSync(f)) res.status(r.status).type('json').send(fs.readFileSync(f, 'utf8'));
+    // Serve decrypted JSON if available, otherwise raw
+    const dec = path.join(__dirname, 'api-decrypted', r.file);
+    const raw = path.join(__dirname, 'api-mock', r.file);
+    const f = fs.existsSync(dec) ? dec : raw;
+    if (fs.existsSync(f)) res.status(r.status).send(fs.readFileSync(f, 'utf8'));
     else res.status(404).json({error:'not found'});
   };
-  app[r.method.toLowerCase()](r.path, h);
+  app[r.method.toLowerCase()](r.path.split('?')[0], h);
 }
 
 app.get('*', (req, res) => {
