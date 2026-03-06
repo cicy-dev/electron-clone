@@ -159,12 +159,49 @@ function build() {
     }
   }
   
-  // Copy captured index.html if exists
+  // Copy captured index.html if exists, rewrite absolute URLs to relative
   const capturedIndex = path.join(DATA_DIR, '_captured', 'index.html');
   if (fs.existsSync(capturedIndex)) {
-    fs.copyFileSync(capturedIndex, path.join(staticDir, 'index.html'));
-    console.log('  + index.html (captured)');
+    let html = fs.readFileSync(capturedIndex, 'utf8');
+    // Rewrite absolute URLs to relative: https://domain/path -> /path
+    const domainPattern = new RegExp(`https?://${domain.replace(/\./g, '\\.')}`, 'g');
+    html = html.replace(domainPattern, '');
+    fs.writeFileSync(path.join(staticDir, 'index.html'), html);
+    console.log('  + index.html (captured, URLs rewritten)');
     staticCount++;
+  }
+  
+  // Report missing files (have response header but no body)
+  const missing = [];
+  for (const [url, entry] of Object.entries(map)) {
+    let parsed;
+    try { parsed = new URL(url); } catch { continue; }
+    if (parsed.hostname !== domain) continue;
+    
+    const resps = entry.responses || [];
+    if (resps.length === 0) continue;
+    
+    const found = findBodyFile(resps);
+    if (found) continue; // already cloned
+    
+    // Has response headers but no body - needs download
+    let mimeType = '';
+    for (let i = resps.length - 1; i >= 0; i--) {
+      if (!resps[i]?.__file) continue;
+      try {
+        const h = JSON.parse(fs.readFileSync(resps[i].__file, 'utf8'));
+        if (h.status === 200) { mimeType = h.mimeType || ''; break; }
+      } catch {}
+    }
+    missing.push({ url, path: parsed.pathname, mimeType });
+  }
+  
+  if (missing.length > 0) {
+    const missingFile = path.join(OUTPUT_DIR, 'missing.json');
+    fs.writeFileSync(missingFile, JSON.stringify(missing, null, 2));
+    console.log(`\n  Missing body (need download): ${missing.length}`);
+    console.log(`  Saved to: ${missingFile}`);
+    console.log(`  Run: node clone.js download ${winId} ${domain}`);
   }
   
   // Generate server.js
@@ -207,7 +244,79 @@ app.listen(process.env.PORT || 3210, () => console.log('Clone: http://localhost:
   console.log(`\nRun: cd ${OUTPUT_DIR} && npm install && npm start`);
 }
 
+// ============ DOWNLOAD missing files ============
+async function download() {
+  const map = readMap();
+  const domain = detectDomain(map);
+  const OUTPUT_DIR = path.join(OUTPUT_BASE, domain);
+  const missingFile = path.join(OUTPUT_DIR, 'missing.json');
+  
+  if (!fs.existsSync(missingFile)) {
+    console.log('No missing.json found. Run build first.');
+    process.exit(1);
+  }
+  
+  const missing = JSON.parse(fs.readFileSync(missingFile, 'utf8'));
+  console.log(`Downloading ${missing.length} missing files...`);
+  
+  const staticDir = path.join(OUTPUT_DIR, 'static');
+  
+  for (const item of missing) {
+    let filePath = item.path || '/';
+    if (filePath === '/' || filePath.endsWith('/')) filePath += 'index.html';
+    if (!path.extname(filePath)) {
+      const m = item.mimeType || '';
+      if (m.includes('javascript')) filePath += '.js';
+      else if (m.includes('css')) filePath += '.css';
+      else if (m.includes('html')) filePath += '.html';
+      else if (m.includes('json')) filePath += '.json';
+    }
+    
+    const outPath = path.join(staticDir, filePath);
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    
+    // Use session_download_url via Electron MCP RPC
+    const http = require('http');
+    const configPath = path.join(os.homedir(), 'data', 'electron', 'curl-rpc.json');
+    let baseUrl = 'http://localhost:8101', token = '';
+    if (fs.existsSync(configPath)) {
+      const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      const node = cfg[0]; // local node
+      baseUrl = node.base_url;
+      token = node.api_token;
+    }
+    
+    try {
+      const body = JSON.stringify({
+        name: 'session_download_url',
+        arguments: { win_id: parseInt(winId), url: item.url, save_path: outPath }
+      });
+      
+      const url = new URL(baseUrl + '/rpc/call');
+      const res = await new Promise((resolve, reject) => {
+        const req = http.request({
+          hostname: url.hostname, port: url.port, path: url.pathname,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+        }, resolve);
+        req.on('error', reject);
+        req.write(body);
+        req.end();
+      });
+      
+      let data = '';
+      for await (const chunk of res) data += chunk;
+      console.log(`  ✓ ${filePath}`);
+    } catch (e) {
+      console.log(`  ✗ ${filePath}: ${e.message}`);
+    }
+  }
+  
+  console.log('Done! Missing files downloaded.');
+}
+
 // ============ MAIN ============
 if (cmd === 'capture') capture();
 else if (cmd === 'build') build();
+else if (cmd === 'download') download();
 else { capture(); build(); }
