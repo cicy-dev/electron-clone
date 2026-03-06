@@ -1,199 +1,213 @@
 /**
  * electron-clone: 1:1 website cloner
  * 
- * Reads Electron MCP's request-data directory and produces a static clone.
- * Run on Windows via: curl-rpc exec_node_file @clone.js
+ * Phase 1: Capture - run while page is loaded in Electron
+ *   node clone.js capture <win_id> [domain]
  * 
- * Usage: node clone.js <win_id> [target_domain]
- *   win_id: window ID (e.g. 1)
- *   target_domain: only clone this domain (optional, auto-detect from most requests)
+ * Phase 2: Build - assemble clone from captured data  
+ *   node clone.js build <win_id> [domain]
+ *
+ * Reads ~/request-data/win-{id}/ (auto-saved by Electron MCP window-monitor)
  */
 
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const args = process.argv.slice(2);
-const WIN_ID = args[0] || '1';
-const TARGET_DOMAIN = args[1] || null;
+const [,, cmd, winId = '1', targetDomain] = process.argv;
 
-const DATA_DIR = path.join(os.homedir(), 'request-data', `win-${WIN_ID}`);
-const OUTPUT_DIR = path.join(os.homedir(), 'clone-output', `win-${WIN_ID}`);
+if (!cmd || !['capture', 'build', 'clone'].includes(cmd)) {
+  console.log('Usage:');
+  console.log('  node clone.js capture <win_id> [domain]  - capture index.html from live page');
+  console.log('  node clone.js build <win_id> [domain]    - build clone from request-data');
+  console.log('  node clone.js clone <win_id> [domain]    - capture + build');
+  process.exit(1);
+}
+
+const DATA_DIR = path.join(os.homedir(), 'request-data', `win-${winId}`);
+const OUTPUT_BASE = path.join(os.homedir(), 'clone-output');
 
 // Read map.json
-const mapFile = path.join(DATA_DIR, 'map.json');
-if (!fs.existsSync(mapFile)) {
-  console.error(`map.json not found: ${mapFile}`);
-  process.exit(1);
+function readMap() {
+  const mapFile = path.join(DATA_DIR, 'map.json');
+  if (!fs.existsSync(mapFile)) {
+    console.error(`map.json not found: ${mapFile}`);
+    process.exit(1);
+  }
+  return JSON.parse(fs.readFileSync(mapFile, 'utf8'));
 }
 
-const map = JSON.parse(fs.readFileSync(mapFile, 'utf8'));
-const urls = Object.keys(map);
-
-// Detect primary domain
-const domainCount = {};
-for (const url of urls) {
-  try {
-    const d = new URL(url).hostname;
-    domainCount[d] = (domainCount[d] || 0) + 1;
-  } catch {}
-}
-const primaryDomain = TARGET_DOMAIN || Object.entries(domainCount).sort((a, b) => b[1] - a[1])[0]?.[0];
-if (!primaryDomain) {
-  console.error('No domain found');
-  process.exit(1);
+// Detect primary domain from map
+function detectDomain(map) {
+  if (targetDomain) return targetDomain;
+  const count = {};
+  for (const url of Object.keys(map)) {
+    try { const d = new URL(url).hostname; count[d] = (count[d] || 0) + 1; } catch {}
+  }
+  return Object.entries(count).sort((a, b) => b[1] - a[1])[0]?.[0];
 }
 
-console.log(`Cloning domain: ${primaryDomain}`);
-console.log(`Total URLs: ${urls.length}`);
-
-// Classify and extract
-const staticDir = path.join(OUTPUT_DIR, 'static');
-const apiDir = path.join(OUTPUT_DIR, 'api-mock');
-fs.mkdirSync(staticDir, { recursive: true });
-fs.mkdirSync(apiDir, { recursive: true });
-
-const apiRoutes = [];
-let clonedCount = 0;
-let apiCount = 0;
-let skippedCount = 0;
-
-for (const [url, entry] of Object.entries(map)) {
-  let parsed;
-  try { parsed = new URL(url); } catch { continue; }
-  
-  // Only clone target domain
-  if (parsed.hostname !== primaryDomain) continue;
-  
-  // Find latest response with body
-  const responses = entry.responses || [];
-  let bodyFile = null;
-  let mimeType = null;
-  let status = 200;
-  
-  // Iterate responses from latest to earliest
-  for (let i = responses.length - 1; i >= 0; i--) {
+// Find body file from response entries (latest first)
+function findBodyFile(responses) {
+  for (let i = (responses || []).length - 1; i >= 0; i--) {
     const ref = responses[i];
     if (!ref?.__file) continue;
     try {
-      const headerData = JSON.parse(fs.readFileSync(ref.__file, 'utf8'));
-      if (headerData.body?.__file && fs.existsSync(headerData.body.__file)) {
-        bodyFile = headerData.body.__file;
-        mimeType = headerData.mimeType || '';
-        status = headerData.status;
-        break;
+      const h = JSON.parse(fs.readFileSync(ref.__file, 'utf8'));
+      if (h.body?.__file && fs.existsSync(h.body.__file)) {
+        return { bodyFile: h.body.__file, mimeType: h.mimeType || '', status: h.status || 200 };
       }
     } catch {}
   }
-  
-  if (!bodyFile) {
-    skippedCount++;
-    continue;
-  }
-  
-  // Determine output path from URL pathname
-  let pathname = parsed.pathname || '/';
-  // Remove query params from path consideration
-  if (pathname === '/') pathname = '/index.html';
-  // Add extension if missing
-  if (!path.extname(pathname)) {
-    if (mimeType.includes('html')) pathname += '.html';
-    else if (mimeType.includes('json')) pathname += '.json';
-    else if (mimeType.includes('javascript')) pathname += '.js';
-    else if (mimeType.includes('css')) pathname += '.css';
-  }
-  
-  // Check if this is an API request (XHR/fetch returning JSON)
-  const isApi = mimeType.includes('json') && (
-    pathname.includes('/api/') || 
-    pathname.includes('/graphql') ||
-    parsed.searchParams.toString().length > 0
-  );
-  
-  if (isApi) {
-    // Save API mock
-    const reqInfo = entry.requests?.[entry.requests.length - 1];
-    let method = 'GET';
-    let reqBody = null;
-    if (reqInfo?.__file) {
-      try {
-        const reqData = JSON.parse(fs.readFileSync(reqInfo.__file, 'utf8'));
-        method = reqData.method || 'GET';
-        reqBody = reqData.postData;
-      } catch {}
-    }
-    
-    const apiFile = pathname.replace(/[^a-zA-Z0-9/.-]/g, '_') + '.json';
-    const apiOutPath = path.join(apiDir, apiFile);
-    fs.mkdirSync(path.dirname(apiOutPath), { recursive: true });
-    fs.copyFileSync(bodyFile, apiOutPath);
-    
-    apiRoutes.push({
-      method,
-      path: parsed.pathname + parsed.search,
-      responseFile: apiFile,
-      status,
-    });
-    apiCount++;
-  } else {
-    // Save static file
-    const outPath = path.join(staticDir, pathname);
-    fs.mkdirSync(path.dirname(outPath), { recursive: true });
-    fs.copyFileSync(bodyFile, outPath);
-    clonedCount++;
-  }
+  return null;
 }
 
-// Generate mock server
-const mockServer = `const express = require('express');
+// URL pathname to local file path
+function urlToFilePath(url, mimeType) {
+  const parsed = new URL(url);
+  let p = parsed.pathname || '/';
+  if (p === '/' || p.endsWith('/')) p += 'index.html';
+  if (!path.extname(p)) {
+    if (mimeType.includes('html')) p += '.html';
+    else if (mimeType.includes('json')) p += '.json';
+    else if (mimeType.includes('javascript')) p += '.js';
+    else if (mimeType.includes('css')) p += '.css';
+    else p += '.txt';
+  }
+  return p;
+}
+
+// ============ CAPTURE ============
+// Save index.html that CDP can't capture (initial navigation)
+function capture() {
+  const map = readMap();
+  const domain = detectDomain(map);
+  const captureDir = path.join(DATA_DIR, '_captured');
+  fs.mkdirSync(captureDir, { recursive: true });
+  
+  // Write a helper script that Electron will execute to grab the HTML
+  const grabScript = `
+    // This runs inside Electron's exec_js
+    // Returns the full HTML of the current page
+    return '<!DOCTYPE html>' + document.documentElement.outerHTML;
+  `;
+  
+  const grabFile = path.join(captureDir, 'grab-html.js');
+  fs.writeFileSync(grabFile, grabScript);
+  
+  console.log(`Capture helper written to: ${grabFile}`);
+  console.log(`\nNow run this to capture index.html:`);
+  console.log(`  curl-rpc exec_js id=${winId} code="return '<!DOCTYPE html>'+document.documentElement.outerHTML" > ${path.join(captureDir, 'index.html')}`);
+  console.log(`\nOr use the Electron MCP API to exec_js and save the result.`);
+  console.log(`Then run: node clone.js build ${winId} ${domain || ''}`);
+}
+
+// ============ BUILD ============
+function build() {
+  const map = readMap();
+  const domain = detectDomain(map);
+  if (!domain) { console.error('No domain detected'); process.exit(1); }
+  
+  const OUTPUT_DIR = path.join(OUTPUT_BASE, domain);
+  const staticDir = path.join(OUTPUT_DIR, 'static');
+  const apiDir = path.join(OUTPUT_DIR, 'api-mock');
+  fs.mkdirSync(staticDir, { recursive: true });
+  fs.mkdirSync(apiDir, { recursive: true });
+  
+  console.log(`Cloning: ${domain}`);
+  console.log(`Source: ${DATA_DIR}`);
+  console.log(`Output: ${OUTPUT_DIR}`);
+  
+  const apiRoutes = [];
+  let staticCount = 0, apiCount = 0, skipCount = 0;
+  
+  for (const [url, entry] of Object.entries(map)) {
+    let parsed;
+    try { parsed = new URL(url); } catch { continue; }
+    if (parsed.hostname !== domain) continue;
+    
+    const found = findBodyFile(entry.responses);
+    if (!found) { skipCount++; continue; }
+    
+    const { bodyFile, mimeType, status } = found;
+    const filePath = urlToFilePath(url, mimeType);
+    
+    // API detection: JSON responses to /api/ paths or XHR-like
+    const isApi = mimeType.includes('json') && (
+      filePath.includes('/api/') || filePath.includes('/graphql')
+    );
+    
+    if (isApi) {
+      const apiFile = filePath.replace(/[^a-zA-Z0-9/._-]/g, '_');
+      const out = path.join(apiDir, apiFile);
+      fs.mkdirSync(path.dirname(out), { recursive: true });
+      fs.copyFileSync(bodyFile, out);
+      
+      // Get method from request
+      let method = 'GET';
+      const reqRef = entry.requests?.[entry.requests.length - 1];
+      if (reqRef?.__file) {
+        try { method = JSON.parse(fs.readFileSync(reqRef.__file, 'utf8')).method || 'GET'; } catch {}
+      }
+      apiRoutes.push({ method, path: parsed.pathname + parsed.search, file: apiFile, status });
+      apiCount++;
+    } else {
+      const out = path.join(staticDir, filePath);
+      fs.mkdirSync(path.dirname(out), { recursive: true });
+      fs.copyFileSync(bodyFile, out);
+      staticCount++;
+    }
+  }
+  
+  // Copy captured index.html if exists
+  const capturedIndex = path.join(DATA_DIR, '_captured', 'index.html');
+  if (fs.existsSync(capturedIndex)) {
+    fs.copyFileSync(capturedIndex, path.join(staticDir, 'index.html'));
+    console.log('  + index.html (captured)');
+    staticCount++;
+  }
+  
+  // Generate server.js
+  fs.writeFileSync(path.join(OUTPUT_DIR, 'server.js'), `const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const app = express();
 
-// Static files
 app.use(express.static(path.join(__dirname, 'static')));
 
-// API mock routes
 const routes = ${JSON.stringify(apiRoutes, null, 2)};
-
-for (const route of routes) {
-  const handler = (req, res) => {
-    const file = path.join(__dirname, 'api-mock', route.responseFile);
-    if (fs.existsSync(file)) {
-      res.status(route.status).type('json').send(fs.readFileSync(file, 'utf8'));
-    } else {
-      res.status(404).json({ error: 'mock not found' });
-    }
+for (const r of routes) {
+  const h = (req, res) => {
+    const f = path.join(__dirname, 'api-mock', r.file);
+    if (fs.existsSync(f)) res.status(r.status).type('json').send(fs.readFileSync(f, 'utf8'));
+    else res.status(404).json({error:'not found'});
   };
-  if (route.method === 'POST') app.post(route.path, handler);
-  else if (route.method === 'PUT') app.put(route.path, handler);
-  else if (route.method === 'DELETE') app.delete(route.path, handler);
-  else app.get(route.path, handler);
+  app[r.method.toLowerCase()](r.path, h);
 }
 
-// Fallback to index.html (SPA)
 app.get('*', (req, res) => {
-  const index = path.join(__dirname, 'static', 'index.html');
-  if (fs.existsSync(index)) res.sendFile(index);
+  const f = path.join(__dirname, 'static', 'index.html');
+  if (fs.existsSync(f)) res.sendFile(f);
   else res.status(404).send('Not found');
 });
 
-const PORT = process.env.PORT || 3210;
-app.listen(PORT, () => console.log(\`Clone server: http://localhost:\${PORT}\`));
-`;
+app.listen(process.env.PORT || 3210, () => console.log('Clone: http://localhost:' + (process.env.PORT || 3210)));
+`);
+  
+  fs.writeFileSync(path.join(OUTPUT_DIR, 'package.json'), JSON.stringify({
+    name: `clone-${domain}`,
+    scripts: { start: 'node server.js' },
+    dependencies: { express: '^4.18.0' }
+  }, null, 2));
+  
+  console.log(`\nDone!`);
+  console.log(`  Static: ${staticCount}`);
+  console.log(`  API mock: ${apiCount}`);
+  console.log(`  Skipped: ${skipCount}`);
+  console.log(`\nRun: cd ${OUTPUT_DIR} && npm install && npm start`);
+}
 
-fs.writeFileSync(path.join(OUTPUT_DIR, 'server.js'), mockServer);
-
-// Generate package.json
-fs.writeFileSync(path.join(OUTPUT_DIR, 'package.json'), JSON.stringify({
-  name: `clone-${primaryDomain}`,
-  scripts: { start: 'node server.js' },
-  dependencies: { express: '^4.18.0' }
-}, null, 2));
-
-// Summary
-console.log(`\nDone! Output: ${OUTPUT_DIR}`);
-console.log(`  Static files: ${clonedCount}`);
-console.log(`  API mocks: ${apiCount}`);
-console.log(`  Skipped (no body): ${skippedCount}`);
-console.log(`\nTo run: cd ${OUTPUT_DIR} && npm install && npm start`);
+// ============ MAIN ============
+if (cmd === 'capture') capture();
+else if (cmd === 'build') build();
+else { capture(); build(); }
