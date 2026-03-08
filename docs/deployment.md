@@ -144,3 +144,19 @@ clone logs vite
 4. Worker 不需要配置 routes，只需要正确的 name
 5. `public/` 目录不提交 git，每次部署前从 `clone-dev/public/` 复制
 6. 如果有未提交的 git 更改，加 `--commit-dirty=true`
+
+## Electron 流量监控
+
+通过 mitmproxy 监控 Electron 流量：
+
+```bash
+# 1. 启动 mitmproxy
+mitmdump -p 8888 --ssl-insecure -s mitm-redis.py
+
+# 2. 启动 Electron 并配置代理
+xui 1 electron start --url=http://localhost:8834/ --port=8101 --proxy=http://127.0.0.1:8888
+
+# 3. Electron 的所有流量会经过 mitmproxy 并存入 Redis
+```
+
+**注意：** Electron MCP 需要 v1.1.0+ 版本才支持 `--proxy` 参数。
