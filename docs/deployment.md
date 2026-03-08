@@ -94,17 +94,22 @@ clone logs vite
 
 ```
 /home/w3c_offical/workers/w-20130/electron-clone/
-├── server.js              # API 服务器
-├── start.sh               # 启动脚本
+├── server.js              # API 服务器 (端口 8835)
+├── start.sh               # 一键启动所有服务
+├── clone                  # clone 命令行工具 (→ ~/.local/bin/clone)
 ├── deploy-clone.sh        # 克隆站点部署脚本
 ├── .gitignore             # Git 忽略规则
 ├── config/
-│   └── default.json       # 配置文件
+│   └── default.json       # 配置文件（白名单、并发数）
 ├── lib/                   # 核心模块
+│   ├── sync.js            # Redis 同步 + HTML 处理
+│   ├── resource-resolver.js  # 资源解析 + 并发下载
+│   ├── domain-rewriter.js    # 域名替换
+│   └── config.js          # 配置管理
 ├── worker/
 │   ├── clone-dev/         # 本地开发（不部署）
-│   │   ├── index.js
-│   │   ├── wrangler.toml
+│   │   ├── index.js       # Worker 代码
+│   │   ├── wrangler.toml  # Wrangler 配置
 │   │   └── public/        # 同步的资源（不提交 git）
 │   ├── c-45177-vip/       # 生产 Worker（部署）
 │   │   ├── index.js
@@ -112,7 +117,7 @@ clone logs vite
 │   │   └── public/        # 复制自 clone-dev/public/
 │   └── c-example-com/     # 其他克隆站点...
 ├── web/                   # UI 项目
-│   ├── index.html
+│   ├── index.html         # 控制面板 UI（双 webview + 同步）
 │   ├── dist/              # 构建产物（不提交 git）
 │   ├── vite.config.js
 │   └── package.json
