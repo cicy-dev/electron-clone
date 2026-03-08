@@ -4,10 +4,17 @@
 
 **严格遵守以下命名，不得随意创建新项目：**
 
-### Cloudflare Pages 项目
+### Cloudflare Pages 项目（UI）
 - **项目名**: `electron-clone` （已存在，不要改）
 - **自定义域名**: `clone.deepfetch.de5.net` （已绑定，不要改）
 - **主域名**: `electron-clone.pages.dev`
+
+### Cloudflare Workers 项目（克隆站点）
+- **命名规则**: `c-<domain>` （域名中的 `.` 替换为 `-`）
+- **示例**: 
+  - `45177.vip` → `c-45177-vip`
+  - `example.com` → `c-example-com`
+- **访问地址**: `https://c-<domain>.ob6ha3.workers.dev`
 
 ### 本地项目
 - **项目目录**: `/home/w3c_offical/workers/w-20130/electron-clone`
@@ -16,25 +23,41 @@
 
 ### 端口分配
 - **8835**: API 服务器 (`server.js`)
-- **8787**: Wrangler dev (克隆站点)
+- **8787**: Wrangler dev (本地开发)
 - **8834**: Vite dev (UI 开发)
 
 ## 部署流程
 
-### 1. 构建 UI
+### 1. 部署 UI（控制面板）
 ```bash
 cd /home/w3c_offical/workers/w-20130/electron-clone/web
 npx vite build
-```
-
-### 2. 部署到 Cloudflare Pages
-```bash
-cd /home/w3c_offical/workers/w-20130/electron-clone/web
 npx wrangler pages deploy dist --project-name=electron-clone --commit-dirty=true
 ```
 
-### 3. 验证部署
 访问: https://clone.deepfetch.de5.net
+
+### 2. 部署克隆站点（独立 Worker）
+```bash
+cd /home/w3c_offical/workers/w-20130/electron-clone
+
+# 1. 创建 Worker 配置
+./deploy-clone.sh https://45177.vip
+
+# 2. 同步资源（通过 UI 或 API）
+curl -X POST http://localhost:8835/api/sync \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://45177.vip/normal/?cid=1733015"}'
+
+# 3. 复制资源到 Worker 目录
+cp -r worker/clone-dev/public/* worker/c-45177-vip/public/
+
+# 4. 部署到 Cloudflare Workers
+cd worker/c-45177-vip
+npx wrangler deploy
+```
+
+访问: https://c-45177-vip.ob6ha3.workers.dev
 
 ## 禁止操作
 
@@ -42,6 +65,8 @@ npx wrangler pages deploy dist --project-name=electron-clone --commit-dirty=true
 ❌ **不要修改项目名称**（保持 `electron-clone`）
 ❌ **不要修改自定义域名**（保持 `clone.deepfetch.de5.net`）
 ❌ **不要修改 tmux session 名称**（保持 `w-20130`）
+❌ **不要在 wrangler.toml 中配置 routes**（只需要 name）
+❌ **不要提交 public/ 目录到 git**（已在 .gitignore）
 
 ## 快速命令
 
@@ -52,6 +77,9 @@ clone start
 # 部署 UI
 cd /home/w3c_offical/workers/w-20130/electron-clone/web
 npx vite build && npx wrangler pages deploy dist --project-name=electron-clone --commit-dirty=true
+
+# 部署克隆站点
+clone deploy https://example.com
 
 # 检查服务状态
 clone status
@@ -68,16 +96,24 @@ clone logs vite
 /home/w3c_offical/workers/w-20130/electron-clone/
 ├── server.js              # API 服务器
 ├── start.sh               # 启动脚本
+├── deploy-clone.sh        # 克隆站点部署脚本
+├── .gitignore             # Git 忽略规则
 ├── config/
 │   └── default.json       # 配置文件
 ├── lib/                   # 核心模块
-├── worker/clone-dev/      # Wrangler 项目
-│   ├── index.js
-│   ├── wrangler.toml
-│   └── public/            # 同步的资源
+├── worker/
+│   ├── clone-dev/         # 本地开发（不部署）
+│   │   ├── index.js
+│   │   ├── wrangler.toml
+│   │   └── public/        # 同步的资源（不提交 git）
+│   ├── c-45177-vip/       # 生产 Worker（部署）
+│   │   ├── index.js
+│   │   ├── wrangler.toml
+│   │   └── public/        # 复制自 clone-dev/public/
+│   └── c-example-com/     # 其他克隆站点...
 ├── web/                   # UI 项目
 │   ├── index.html
-│   ├── dist/              # 构建产物（部署这个）
+│   ├── dist/              # 构建产物（不提交 git）
 │   ├── vite.config.js
 │   └── package.json
 └── docs/
@@ -87,12 +123,19 @@ clone logs vite
 
 ## 域名访问
 
+### UI（控制面板）
 - **生产环境**: https://clone.deepfetch.de5.net
 - **开发环境**: http://localhost:8834
 
+### 克隆站点
+- **生产环境**: https://c-<domain>.ob6ha3.workers.dev
+- **开发环境**: http://localhost:8787
+
 ## 注意事项
 
-1. 部署前必须先 `npx vite build`
-2. 部署时必须指定 `--project-name=electron-clone`
-3. 如果有未提交的 git 更改，加 `--commit-dirty=true`
-4. 部署后自动生效，无需手动操作 DNS
+1. UI 部署前必须先 `npx vite build`
+2. UI 部署时必须指定 `--project-name=electron-clone`
+3. 克隆站点每个域名独立 Worker，命名规则 `c-<domain>`
+4. Worker 不需要配置 routes，只需要正确的 name
+5. `public/` 目录不提交 git，每次部署前从 `clone-dev/public/` 复制
+6. 如果有未提交的 git 更改，加 `--commit-dirty=true`

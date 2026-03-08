@@ -1,0 +1,169 @@
+#!/bin/bash
+# Clone Studio - 通用网站克隆系统管理工具
+
+ROOT="/home/w3c_offical/workers/w-20130/electron-clone"
+SESSION="w-20130"
+
+cmd=$1
+shift
+
+case "$cmd" in
+  start)
+    # 启动所有服务
+    if ! tmux has-session -t $SESSION 2>/dev/null; then
+      tmux new-session -d -s $SESSION
+    fi
+    
+    # API
+    tmux send-keys -t $SESSION:api C-c 2>/dev/null || tmux new-window -t $SESSION -n api
+    sleep 0.3
+    tmux send-keys -t $SESSION:api "cd $ROOT && node server.js" Enter
+    
+    # Wrangler
+    tmux send-keys -t $SESSION:wrangler C-c 2>/dev/null || tmux new-window -t $SESSION -n wrangler
+    sleep 0.3
+    tmux send-keys -t $SESSION:wrangler "cd $ROOT/worker/clone-dev && npx wrangler dev --port 8787" Enter
+    
+    # Vite
+    tmux send-keys -t $SESSION:vite C-c 2>/dev/null || tmux new-window -t $SESSION -n vite
+    sleep 0.3
+    tmux send-keys -t $SESSION:vite "cd $ROOT/web && npx vite --port 8834 --host 0.0.0.0" Enter
+    
+    echo "✓ 所有服务已启动"
+    echo "  API:      http://localhost:8835"
+    echo "  Wrangler: http://localhost:8787"
+    echo "  UI:       http://localhost:8834"
+    ;;
+    
+  stop)
+    # 停止所有服务
+    tmux send-keys -t $SESSION:api C-c 2>/dev/null
+    tmux send-keys -t $SESSION:wrangler C-c 2>/dev/null
+    tmux send-keys -t $SESSION:vite C-c 2>/dev/null
+    echo "✓ 所有服务已停止"
+    ;;
+    
+  restart)
+    # 重启所有服务
+    $0 stop
+    sleep 1
+    $0 start
+    ;;
+    
+  status)
+    # 检查服务状态
+    echo "=== API (8835) ==="
+    curl -s -o /dev/null -w "%{http_code}" http://localhost:8835/api/status
+    echo ""
+    echo "=== Wrangler (8787) ==="
+    curl -s -o /dev/null -w "%{http_code}" http://localhost:8787/
+    echo ""
+    echo "=== Vite (8834) ==="
+    curl -s -o /dev/null -w "%{http_code}" http://localhost:8834/
+    echo ""
+    ;;
+    
+  logs)
+    # 查看日志
+    pane=${1:-api}
+    tmux capture-pane -t $SESSION:$pane -p | tail -50
+    ;;
+    
+  ui)
+    # 打开 UI
+    url="http://localhost:8834/"
+    if [ -n "$1" ]; then
+      url="http://localhost:8834/?url=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$1'))")"
+    fi
+    curl-rpc open_window url="$url" 2>/dev/null | grep -o "ID: [0-9]*"
+    ;;
+    
+  sync)
+    # 同步指定 URL
+    if [ -z "$1" ]; then
+      echo "用法: clone sync <url>"
+      exit 1
+    fi
+    curl -s -X POST http://localhost:8835/api/sync \
+      -H "Content-Type: application/json" \
+      -d "{\"url\":\"$1\"}" | jq -r '.ok'
+    ;;
+    
+  reset)
+    # 重置状态
+    curl -s -X POST http://localhost:8835/api/reset | jq -r '.ok'
+    echo "✓ 已重置"
+    ;;
+    
+  deploy)
+    # 部署克隆站点到 Workers
+    if [ -z "$1" ]; then
+      echo "用法: clone deploy <url>"
+      exit 1
+    fi
+    
+    SOURCE_URL="$1"
+    DOMAIN=$(echo "$SOURCE_URL" | sed -E 's|https?://||' | sed 's|/.*||' | sed 's|\.|_|g')
+    WORKER_NAME="c-${DOMAIN}"
+    WORKER_DIR="$ROOT/worker/${WORKER_NAME}"
+    
+    echo "=== 部署克隆站点 ==="
+    echo "源站: $SOURCE_URL"
+    echo "Worker: $WORKER_NAME"
+    echo ""
+    
+    # 1. 创建 Worker 配置
+    if [ ! -d "$WORKER_DIR" ]; then
+      echo "→ 创建 Worker 配置..."
+      $ROOT/deploy-clone.sh "$SOURCE_URL" > /dev/null
+    fi
+    
+    # 2. 同步资源
+    echo "→ 同步资源..."
+    curl -s -X POST http://localhost:8835/api/sync \
+      -H "Content-Type: application/json" \
+      -d "{\"url\":\"$SOURCE_URL\"}" | jq -r '.ok' > /dev/null
+    
+    # 3. 复制资源
+    echo "→ 复制资源到 Worker..."
+    rm -rf "$WORKER_DIR/public"
+    mkdir -p "$WORKER_DIR/public"
+    cp -r "$ROOT/worker/clone-dev/public/"* "$WORKER_DIR/public/" 2>/dev/null || true
+    
+    # 4. 部署
+    echo "→ 部署到 Cloudflare Workers..."
+    cd "$WORKER_DIR"
+    DEPLOY_URL=$(npx wrangler deploy 2>&1 | grep -o 'https://[^ ]*workers.dev' | head -1)
+    
+    echo ""
+    echo "✓ 部署成功！"
+    echo "  访问: $DEPLOY_URL"
+    ;;
+    
+  *)
+    cat <<EOF
+Clone Studio - 通用网站克隆系统
+
+用法: clone <command> [args]
+
+命令:
+  start              启动所有服务 (API + Wrangler + Vite)
+  stop               停止所有服务
+  restart            重启所有服务
+  status             检查服务状态
+  logs [pane]        查看日志 (api|wrangler|vite)
+  ui [url]           打开 UI (可选自动同步 URL)
+  sync <url>         同步指定 URL
+  reset              重置状态
+  deploy <url>       部署克隆站点到 Workers
+
+示例:
+  clone start
+  clone status
+  clone ui https://example.com
+  clone sync https://example.com/page
+  clone logs api
+  clone deploy https://45177.vip
+EOF
+    ;;
+esac
