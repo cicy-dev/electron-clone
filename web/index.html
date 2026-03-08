@@ -97,6 +97,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
       <div class="empty">同步后自动加载</div>
     </div>
   </div>
+  <!-- 调试日志 -->
+  <div id="debug-log" style="position:fixed;bottom:0;left:0;right:300px;background:rgba(0,0,0,0.9);color:#0f0;padding:8px;font-size:10px;max-height:150px;overflow:auto;z-index:9999;font-family:monospace;display:none"></div>
   <div class="panel">
     <div class="tabs">
       <div class="tab on" onclick="stab(this,0)">日志</div>
@@ -114,6 +116,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 <script>
 const API='http://localhost:8835';
 const $=id=>document.getElementById(id);
+
+// 调试日志
+window.debugLog = function(msg) {
+  const log = $('debug-log');
+  log.style.display = 'block';
+  const time = new Date().toLocaleTimeString();
+  log.innerHTML += `[${time}] ${msg}<br>`;
+  log.scrollTop = log.scrollHeight;
+};
 
 // ========== 同步操作 ==========
 let syncMode = 'a'; // 'off' | 'a' (A→B) | 'b' (B→A)
@@ -137,12 +148,18 @@ function bindSyncEvents() {
   const { a, b } = getWebviews();
   if (!a || !b) return;
 
+  debugLog('开始绑定同步事件');
+  debugLog(`模式: ${syncMode}, A: ${a.src?.slice(0,30)}, B: ${b.src?.slice(0,30)}`);
+
   // 清除旧监听（通过重新注入）
   [a, b].forEach(wv => {
     wv.removeEventListener('ipc-message', wv._syncHandler);
   });
 
-  if (syncMode === 'off') return;
+  if (syncMode === 'off') {
+    debugLog('同步已关闭');
+    return;
+  }
 
   const source = syncMode === 'a' ? a : b;
   const target = syncMode === 'a' ? b : a;
@@ -155,13 +172,28 @@ function bindSyncEvents() {
   const handler = (e) => {
     if (e.channel !== 'sync-event') return;
     const data = e.args[0];
+    debugLog(`收到同步事件: ${data.type} (${data.x},${data.y})`);
     forwardEvent(target, data);
   };
   source._syncHandler = handler;
   source.addEventListener('ipc-message', handler);
+  
+  // 监听 source 的 console-message，捕获同步事件
+  source.addEventListener('console-message', (e) => {
+    if (e.message.startsWith('__SYNC__')) {
+      try {
+        const data = JSON.parse(e.message.slice(8));
+        debugLog(`捕获同步事件: ${data.type} (${data.x},${data.y})`);
+        forwardEvent(target, data);
+      } catch {}
+    }
+  });
+  
+  debugLog('同步事件已绑定');
 }
 
 function injectSyncCapture(wv) {
+  debugLog('注入同步捕获脚本到 webview');
   wv.executeJavaScript(`
     (function() {
       if (window.__syncInjected) return;
