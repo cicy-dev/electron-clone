@@ -1,3 +1,20 @@
 node_modules/
-output/
+.wrangler/
+dist/
 *.log
+.env
+.DS_Store
+
+# 同步的资源文件（不要提交）
+worker/clone-dev/public/
+
+# 构建产物
+web/dist/
+
+# 临时文件
+*.tar.gz
+worker-old/
+
+# 开发缓存
+.cache/
+tmp/
