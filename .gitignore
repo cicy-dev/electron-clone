@@ -7,6 +7,7 @@ dist/
 
 # 同步的资源文件（不要提交）
 worker/clone-dev/public/
+worker/c-*/public/
 
 # 构建产物
 web/dist/
