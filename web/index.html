@@ -306,6 +306,9 @@ async function doSync(){
       }
       localStorage.setItem('cs-src', src);
       localStorage.setItem('cs-dst', $('dst').value.trim());
+      
+      // 绑定同步事件
+      setTimeout(() => bindSyncEvents(), 1000);
     } else {
       setInfo(`<span class="tag tag-r">失败: ${esc(res.error)}</span>`);
     }
