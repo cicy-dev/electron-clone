@@ -1,0 +1,12 @@
+name = "c-h2b742-rt1980bvk-top"
+main = "index.js"
+compatibility_date = "2024-01-01"
+account_id = "3cd74d293cda341378bb80ea52ff247d"
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "clone-sites"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "a7cc6d7a39764a05a5fe46f56233ca7d"

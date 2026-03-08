@@ -16,11 +16,12 @@ const os = require('os');
 
 const [,, cmd, winId = '1', targetDomain] = process.argv;
 
-if (!cmd || !['capture', 'build', 'clone'].includes(cmd)) {
+if (!cmd || !['capture', 'build', 'clone', 'deploy'].includes(cmd)) {
   console.log('Usage:');
   console.log('  node clone.js capture <win_id> [domain]  - capture index.html from live page');
   console.log('  node clone.js build <win_id> [domain]    - build clone from request-data');
   console.log('  node clone.js clone <win_id> [domain]    - capture + build');
+  console.log('  node clone.js deploy <win_id> [domain]   - deploy to CF Workers');
   process.exit(1);
 }
 
@@ -324,4 +325,14 @@ async function download() {
 if (cmd === 'capture') capture();
 else if (cmd === 'build') build();
 else if (cmd === 'download') download();
+else if (cmd === 'deploy') {
+  const map = readMap();
+  const domain = detectDomain(map);
+  console.log(`\n🚀 Deploying ${domain} to Cloudflare Workers...\n`);
+  
+  // 调用 worker/deploy-cf.js
+  const { execSync } = require('child_process');
+  const workerDir = path.join(__dirname, 'worker');
+  execSync(`node deploy-cf.js ${domain}`, { cwd: workerDir, stdio: 'inherit' });
+}
 else { capture(); build(); }

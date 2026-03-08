@@ -1,0 +1,6 @@
+name = "ws-collector"
+main = "index.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+REDIS_URL = "http://YOUR_MAC_IP:6380"

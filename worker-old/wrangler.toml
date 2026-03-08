@@ -1,0 +1,13 @@
+name = "electron-clone-worker"
+main = "index.js"
+compatibility_date = "2024-01-01"
+
+# KV 命名空间 (API mock 数据)
+[[kv_namespaces]]
+binding = "KV"
+id = "a7cc6d7a39764a05a5fe46f56233ca7d"
+
+# R2 存储桶 (静态资源)
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "clone-sites"

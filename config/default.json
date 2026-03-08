@@ -1,0 +1,10 @@
+{
+  "whitelist_domains": [
+    "45177.vip"
+  ],
+  "wrangler_port": 8787,
+  "redis_host": "localhost",
+  "redis_port": 6379,
+  "mitm_data_dir": "~/mitm-data",
+  "concurrency": 20
+}

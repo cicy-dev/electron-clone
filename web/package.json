@@ -1,0 +1,11 @@
+{
+  "name": "electron-clone-web",
+  "private": true,
+  "scripts": {
+    "dev": "vite --port 8834 --host",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "vite": "^7.3.1"
+  }
+}
