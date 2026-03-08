@@ -112,7 +112,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 </div>
 
 <script>
-const API='http://localhost:8835';
+const API = new URLSearchParams(location.search).get('api') || 'http://localhost:8835';
 const $=id=>document.getElementById(id);
 
 // ========== 同步操作 ==========
