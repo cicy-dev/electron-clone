@@ -75,7 +75,7 @@ case "$cmd" in
     if [ -n "$1" ]; then
       url="http://localhost:8834/?url=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$1'))")"
     fi
-    curl-rpc open_window url="$url" 2>/dev/null | grep -o "ID: [0-9]*"
+    cicy-rpc open_window url="$url" 2>/dev/null | grep -o "ID: [0-9]*"
     ;;
     
   sync)

@@ -158,7 +158,7 @@ export default {
 
 ## 对比 UI
 
-**URL**: https://clone.deepfetch.de5.net
+**URL**: https://g-8834.cicy.de5.net
 
 **参数格式**:
 ```
@@ -167,7 +167,7 @@ export default {
 
 **示例**:
 ```
-https://clone.deepfetch.de5.net/?source=https%3A%2F%2F45177.vip%2Fnormal%2F%3Fcid%3D1733015&clone=https%3A%2F%2Fc-45177-vip.ob6ha3.workers.dev%2Fnormal%2F%3Fcid%3D1733015
+https://g-8834.cicy.de5.net/?source=https%3A%2F%2F45177.vip%2Fnormal%2F%3Fcid%3D1733015&clone=https%3A%2F%2Fc-45177-vip.ob6ha3.workers.dev%2Fnormal%2F%3Fcid%3D1733015
 ```
 
 **功能**:

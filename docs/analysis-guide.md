@@ -5,7 +5,7 @@
 | 工具 | 位置 | 用途 |
 |------|------|------|
 | `el` | `~/.local/bin/el` | Electron MCP 管理 (start/stop/restart/status) |
-| `curl-rpc` | `/usr/bin/curl-rpc` | Electron RPC 调用 |
+| `cicy-rpc` | `/usr/bin/cicy-rpc` | Electron RPC 调用 |
 | `ejs` | `~/.local/bin/ejs` | 在窗口中执行 JS 文件 |
 | `ejs-frame` | `~/.local/bin/ejs-frame` | 在窗口 iframe 中执行 JS 文件 |
 | `vnc` | `~/.local/bin/vnc` | VNC 桌面管理 |
@@ -21,27 +21,27 @@ el start
 # 或双击桌面 ~/Desktop/start-electron.sh
 
 # 3. 验证
-curl-rpc ping
+cicy-rpc ping
 ```
 
 ## 打开游戏
 
 ```bash
 # 打开新窗口 (reuseWindow=false 很重要)
-curl-rpc open_window url="https://h2b742.rt1980bvk.top:22964/home/embedded?cid=1733015&fixed.from=https%253A%252F%252Fh2b742.rt1980bvk.top%253A22964%252Fgossip%252F%253Fdownload%253D1%2523%252Fhome" reuseWindow=false
+cicy-rpc open_window url="https://h2b742.rt1980bvk.top:22964/home/embedded?cid=1733015&fixed.from=https%253A%252F%252Fh2b742.rt1980bvk.top%253A22964%252Fgossip%252F%253Fdownload%253D1%2523%252Fhome" reuseWindow=false
 
 # 查看页面状态
-curl-rpc webpage_snapshot win_id=2
+cicy-rpc webpage_snapshot win_id=2
 
 # 查看所有窗口
-curl-rpc get_windows
+cicy-rpc get_windows
 ```
 
 ## 执行 JS
 
 ```bash
-# 方式1: 简单代码用 curl-rpc (单表达式，不能有冒号等特殊字符)
-curl-rpc exec_js win_id=2 code='document.title'
+# 方式1: 简单代码用 cicy-rpc (单表达式，不能有冒号等特殊字符)
+cicy-rpc exec_js win_id=2 code='document.title'
 
 # 方式2: 复杂代码用 ejs (写文件，支持多语句，用 return 返回值)
 # 注意: 代码会被包在 async () => { ... } 里，所以用 return
@@ -58,7 +58,7 @@ EOF
 ejs-frame ~/tmp/test-frame.js 2 0    # win_id=2, frame_index=0
 
 # 方式4: 主进程操作用 control_electron_WebContents
-curl-rpc control_electron_WebContents win_id=2 code='webContents.getURL()'
+cicy-rpc control_electron_WebContents win_id=2 code='webContents.getURL()'
 ```
 
 ## API 拦截分析
@@ -128,10 +128,10 @@ for e in logs:
 
 ```bash
 # 列出窗口中所有 iframe
-curl-rpc control_electron_WebContents win_id=2 code='JSON.stringify(webContents.mainFrame.frames.map(f=>({url:f.url.slice(0,100),name:f.name})))'
+cicy-rpc control_electron_WebContents win_id=2 code='JSON.stringify(webContents.mainFrame.frames.map(f=>({url:f.url.slice(0,100),name:f.name})))'
 
 # 在 iframe 里执行简单代码
-curl-rpc control_electron_WebContents win_id=2 code='await webContents.mainFrame.frames[0].executeJavaScript("document.title")'
+cicy-rpc control_electron_WebContents win_id=2 code='await webContents.mainFrame.frames[0].executeJavaScript("document.title")'
 ```
 
 ## 注意事项
@@ -139,5 +139,5 @@ curl-rpc control_electron_WebContents win_id=2 code='await webContents.mainFrame
 1. **Ctrl+C 安全**: `el start` 用 `setsid` 启动，Ctrl+C 不会杀 Electron
 2. **ejs 用 return**: 代码被包在 `async () => {}` 里，必须用 `return` 返回值
 3. **ejs-frame 不用 return**: 直接 `executeJavaScript`，最后一个表达式就是返回值
-4. **curl-rpc YAML 限制**: code= 后面不能有复杂内容（冒号、引号嵌套），复杂代码用 ejs
+4. **cicy-rpc YAML 限制**: code= 后面不能有复杂内容（冒号、引号嵌套），复杂代码用 ejs
 5. **游戏在 iframe 里**: 主页面是大厅，具体游戏加载在 iframe 中，需要用 ejs-frame 分析

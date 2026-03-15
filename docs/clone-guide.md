@@ -35,7 +35,7 @@
 #### 1.1 打开源站窗口
 
 ```bash
-ELECTRON_MCP_NODE=1 curl-rpc open_window url=https://45177.vip/normal/?cid=1733015
+ELECTRON_MCP_NODE=1 cicy-rpc open_window url=https://45177.vip/normal/?cid=1733015
 # 返回 window ID，例如 win_id=6
 ```
 
@@ -51,7 +51,7 @@ C:\Users\Administrator\request-data\win-6\map.json
 由于 SPA 的 index.html 是服务端渲染后的完整 DOM（包含内联数据），需要用 `exec_js` 获取实际 HTML：
 
 ```bash
-ELECTRON_MCP_NODE=1 curl-rpc exec_js win_id=6 \
+ELECTRON_MCP_NODE=1 cicy-rpc exec_js win_id=6 \
   code="document.documentElement.outerHTML"
 ```
 

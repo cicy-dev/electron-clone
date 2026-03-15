@@ -1,10 +1,10 @@
 {
   "whitelist_domains": [
-    "45177.vip"
+    "www.bet365.com"
   ],
   "wrangler_port": 8787,
   "redis_host": "localhost",
   "redis_port": 6379,
-  "mitm_data_dir": "~/mitm-data",
+  "mitm_data_dir": "/home/w3c_offical/Private/workers/w-20130/data/traffic",
   "concurrency": 20
 }

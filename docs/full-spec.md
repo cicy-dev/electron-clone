@@ -237,7 +237,7 @@ node clone.js full <win_id> <domain>
 ✅ 部署到 https://c-example-com.ob6ha3.workers.dev
 
 🔗 对比 URL:
-https://clone.deepfetch.de5.net/?source=https://example.com&clone=https://c-example-com.ob6ha3.workers.dev&sync=true
+https://g-8834.cicy.de5.net/?source=https://example.com&clone=https://c-example-com.ob6ha3.workers.dev&sync=true
 ```
 
 ## 数据存储
@@ -302,7 +302,7 @@ export default {
 
 ### URL 参数
 ```
-https://clone.deepfetch.de5.net/?source={源站}&clone={克隆站}&sync={true|false}
+https://g-8834.cicy.de5.net/?source={源站}&clone={克隆站}&sync={true|false}
 ```
 
 **参数：**

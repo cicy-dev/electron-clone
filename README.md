@@ -1,76 +1,196 @@
-# electron-clone v2
+# Clone 系统完整指南
 
-通用网站克隆系统。基于 mitmproxy + Redis 捕获的流量，本地 Wrangler dev 重建任意网站的 1:1 克隆。
+## 系统架构
 
-## 架构
+### 核心组件
+
+| 组件 | 端口 | 访问方式 | 作用 |
+|------|------|----------|------|
+| **UI 控制面板** | - | https://g-8834.cicy.de5.net | 双 webview + 同步按钮 |
+| **API 服务器** | 8835 | https://g-8835.cicy.de5.net | 同步、mock、资源解析 |
+| **Wrangler Dev** | 8787 | https://g-8787.cicy.de5.net | 托管克隆站点静态资源 |
+| **mitmproxy** | 8888 | 34.150.15.106:8888 | 流量捕获 + Redis 存储 |
+| **Redis** | 6379 | localhost | 流量数据存储 |
+| **Vite Dev** | 8834 | localhost | UI 开发（可选）|
+
+### 数据流
 
 ```
-A (源站 via mitmproxy) → Redis ← Wrangler Worker (API mock)
-                           ↓
-                     B (克隆站 via Wrangler dev)
-                           ↓
-                   console error → 自动拉取缺失资源 → public/
+原站流量 → mitmproxy → Redis → API 同步 → public/ → Wrangler → 克隆站
 ```
 
-## 核心功能
+## 快速启动
 
-1. **同步按钮** — 把 A 的 HTML 同步到 Wrangler 项目
-2. **资源自动补全** — 解析 B 的 console error，从 Redis 拉取缺失资源到 `public/`
-3. **域名替换** — 多域名（CDN/static）统一替换为本地路径
-4. **API Mock** — Wrangler worker 从 Redis 返回捕获的 API 响应
-5. **白名单** — 只处理白名单域名，忽略 Google Analytics 等第三方
+### GCP（服务端）
+
+```bash
+# 1. 启动所有服务
+clone start
+
+# 2. 添加 Cloudflare Tunnel
+bash ~/skills/cf-tunnel.sh add 8787 8835
+
+# 3. 检查状态
+clone status
+```
+
+### Linux 本地
+
+```bash
+# 启动 Electron
+xui 1 electron start \
+  --url="https://g-8834.cicy.de5.net/" \
+  --port=8101 \
+  --proxy=http://127.0.0.1:8888 \
+  --no-cache
+```
+
+### Mac（有 VPN）
+
+```bash
+# 1. 启动本地 mitmproxy（upstream 到 GCP）
+mitmdump --mode upstream:http://34.150.15.106:8888 -p 18888 --ssl-insecure &
+
+# 2. 启动 Electron
+ENCODED_URL=$(python3 -c "import urllib.parse; print(urllib.parse.quote('https://g-8834.cicy.de5.net/', safe=''))")
+xui 1 electron start \
+  --url="${ENCODED_URL}" \
+  --port=8101 \
+  --proxy=http://127.0.0.1:18888 \
+  --no-cache
+```
+
+**流量链路：** Electron → Mac mitmproxy (18888) → GCP mitmproxy (8888) → Redis
+
+### Windows（未来支持）
+
+```bash
+# TODO: Windows 配置
+```
+
+## 部署
+
+### UI 部署（Cloudflare Pages）
+
+```bash
+cd /home/w3c_offical/workers/w-20130/electron-clone/web
+npx vite build
+npx wrangler pages deploy dist --project-name=electron-clone --commit-dirty=true
+```
+
+### 克隆站点部署（Cloudflare Workers）
+
+```bash
+# 使用 clone 命令
+clone deploy https://example.com
+
+# 手动部署
+cd /home/w3c_offical/workers/w-20130/electron-clone
+./deploy-clone.sh https://example.com
+cd worker/c-example-com
+npx wrangler deploy
+```
+
+## 配置说明
+
+### mitmproxy 配置
+
+**GCP (supervisor):**
+```ini
+[program:mitmdump]
+command=/home/w3c_offical/.local/bin/mitmdump -p 8888 --ssl-insecure --set block_global=false -s mitm-redis.py
+directory=/home/w3c_offical/Private/workers/w-20130
+autostart=true
+autorestart=true
+```
+
+**关键参数：**
+- `--set block_global=false` - 允许远程连接
+- `-s mitm-redis.py` - 加载 Redis 存储 addon
+
+### Electron 配置
+
+**必需参数：**
+- `--no-cache` - 禁用 HTTP 缓存（必须）
+- `--proxy=http://...` - 代理地址
+
+**平台差异：**
+- Linux: 直接连 GCP mitmproxy
+- Mac (VPN): 需要本地 mitmproxy upstream
+- Windows: 待支持
+
+### Cloudflare Tunnel
+
+```bash
+# 添加路由
+bash ~/skills/cf-tunnel.sh add 8787 8835
+
+# 查看路由
+bash ~/skills/cf-tunnel.sh list
+```
+
+## 常用命令
+
+```bash
+# 服务管理
+clone start              # 启动所有服务
+clone stop               # 停止所有服务
+clone status             # 检查状态
+clone logs api           # 查看 API 日志
+clone logs wrangler      # 查看 Wrangler 日志
+
+# 部署
+clone deploy <url>       # 部署克隆站点
+clone ui                 # 打开 UI
+
+# 调试
+clone reset              # 重置状态
+redis-cli FLUSHALL       # 清空 Redis
+```
+
+## 故障排查
+
+### Electron 无法加载
+
+1. 检查代理连接：`curl -x http://proxy:port http://ifconfig.me`
+2. 检查证书：Electron 需要 `ignore-certificate-errors`
+3. Mac VPN：必须用 upstream proxy
+
+### mitmproxy 连接失败
+
+1. 检查 `block_global=false` 配置
+2. 检查防火墙：`gcloud compute firewall-rules list | grep 8888`
+3. 检查进程：`sudo supervisorctl status mitmdump`
+
+### 克隆站点无资源
+
+1. 检查 Redis：`redis-cli KEYS "*"`
+2. 检查 public/：`ls worker/clone-dev/public/`
+3. 重新同步：点击 UI 的"同步"按钮
 
 ## 项目结构
 
 ```
 electron-clone/
-├── web/index.html              # 控制面板 UI（双窗口 + 同步按钮）
-├── worker/clone-dev/           # Wrangler dev 项目
-│   ├── index.js                # Worker: static + API mock
-│   ├── wrangler.toml
-│   └── public/                 # 同步的静态资源
-├── lib/
-│   ├── sync.js                 # 同步逻辑
-│   ├── resource-resolver.js    # console error 解析 + 资源拉取
-│   ├── domain-rewriter.js      # 域名替换
-│   └── config.js               # 配置管理
-├── config/default.json         # 白名单、端口配置
-└── docs/
+├── web/                    # UI 源码
+│   └── index.html         # 双 webview 控制面板
+├── worker/
+│   ├── clone-dev/         # 本地开发
+│   │   ├── index.js       # Worker 代码
+│   │   └── public/        # 同步的资源
+│   └── c-*/               # 部署的克隆站点
+├── lib/                   # 核心模块
+│   ├── sync.js
+│   ├── resource-resolver.js
+│   └── domain-rewriter.js
+├── server.js              # API 服务器
+├── clone                  # CLI 工具
+└── docs/                  # 文档
 ```
 
-## 同步流程
+## 相关链接
 
-```
-点击"同步"
-→ Redis 获取 A 的 HTML → 域名替换 → public/index.html
-→ B 加载页面 → console error
-→ 解析缺失 URL → 白名单过滤
-→ Redis 拉取资源 → public/
-→ 循环直到无报错
-```
-
-## 启动
-
-```bash
-# 1. Wrangler dev（常驻）
-cd worker/clone-dev && npx wrangler dev
-
-# 2. 控制面板
-# 在 Electron 中打开 web/index.html
-```
-
-## 配置
-
-`config/default.json`:
-```json
-{
-  "whitelist_domains": ["example.com", "cdn.example.com"],
-  "wrangler_port": 8787,
-  "redis_host": "localhost",
-  "redis_port": 6379
-}
-```
-
-## 文档
-
-- [架构设计 v2](docs/architecture-v2.md)
+- **UI**: https://g-8834.cicy.de5.net
+- **GitHub**: https://github.com/cicy-dev/electron-clone
+- **Wrangler**: https://g-8787.cicy.de5.net
+- **API**: https://g-8835.cicy.de5.net

@@ -20,7 +20,7 @@ const resolver = require('./lib/resource-resolver');
 const PORT = 8835;
 
 let state = {
-  synced: false, sourceUrl: '', indexStats: null, lastSync: null,
+  synced: false, sourceUrl: 'https://www.bet365.com/', indexStats: null, lastSync: null,
   notFound: [], errors: [], resolved: [], log: []
 };
 
@@ -145,21 +145,106 @@ async function handleAPI(req, res) {
     if (p === '/api/mock') {
       const reqPath = url.searchParams.get('path') || '';
       if (!reqPath) return json({ ok: false }, 400);
-      // 在索引中找匹配的 URL（任意白名单域名 + 这个 path）
+      
       const idx = sync.getIndex();
+      const qIdx = reqPath.indexOf('?');
+      const reqPathname = qIdx >= 0 ? reqPath.slice(0, qIdx) : reqPath;
+      const reqSearch = qIdx >= 0 ? reqPath.slice(qIdx + 1) : '';
+      
+      // 1. 精确匹配（含 query）
       let entry = null;
       for (const [key, val] of Object.entries(idx)) {
-        try {
-          const u = new URL(key);
-          if (u.pathname === reqPath || u.pathname + u.search === reqPath) {
-            entry = val; break;
-          }
-        } catch {}
+        try { if (new URL(key).pathname + new URL(key).search === reqPath) { entry = val; break; } } catch {}
       }
+      
+      // 2. 模块名匹配（去掉开头数字）
+      if (!entry && reqSearch) {
+        const modKey = reqPathname + '?' + decodeURIComponent(reqSearch).replace(/^\d+,/, '').replace(/&rt=\d+/g, '');
+        entry = idx[modKey] || null;
+        
+        // 3. Blob 前缀匹配（取前5个模块，要求至少匹配80%）
+        if (!entry && reqPathname.includes('/Blob')) {
+          const reqModules = modKey.split('|').filter(m => m.length > 0);
+          let bestMatch = null;
+          let bestScore = 0;
+          
+          for (const [key, val] of Object.entries(idx)) {
+            if (!key.includes('/Blob')) continue;
+            const keyModules = key.split('|').filter(m => m.length > 0);
+            
+            // 计算匹配度：前N个模块有多少相同
+            let matchCount = 0;
+            const checkLen = Math.min(5, reqModules.length, keyModules.length);
+            for (let i = 0; i < checkLen; i++) {
+              if (reqModules[i] === keyModules[i]) matchCount++;
+            }
+            
+            const score = matchCount / checkLen;
+            if (score > bestScore && score >= 0.8) {
+              bestScore = score;
+              bestMatch = val;
+            }
+          }
+          
+          if (bestMatch) {
+            entry = bestMatch;
+            console.log(`[Blob匹配] 相似度${(bestScore*100).toFixed(0)}%`);
+          }
+        }
+      }
+      
+      // 3. pathname 兜底（仅非 Blob 请求）
+      if (!entry && !reqPathname.includes('/Blob')) {
+        entry = idx[Object.keys(idx).find(k => { try { return new URL(k).pathname === reqPathname; } catch { return false; } })] || null;
+      }
+      
       if (!entry) return json({ ok: false });
       const body = await sync.getBody(entry);
       if (!body) return json({ ok: false });
-      return json({ ok: true, body: body.toString('utf8'), status: entry.status, content_type: entry.content_type });
+      return json({ ok: true, body: body.toString('hex'), status: entry.status, content_type: entry.content_type });
+    }
+
+    // /api/save - 保存透传的资源到 Redis
+    if (p === '/api/save' && req.method === 'POST') {
+      const body = await readBody();
+      const { url: fullUrl, status, content_type, body: hexBody } = JSON.parse(body);
+      
+      if (!fullUrl || !hexBody) return json({ ok: false, error: 'Missing url or body' });
+      
+      // 确保 URL 是源站域名（不是 g-8787）
+      const sourceUrl = fullUrl.replace(/g-8787\.cicy\.de5\.net/g, 'www.bet365.com').replace(/^http:/, 'https:');
+      
+      const c = await sync.getClient();
+      const entry = {
+        type: 'http',
+        url: sourceUrl,
+        method: 'GET',
+        status: status || 200,
+        req_headers: {},
+        resp_headers: { 'content-type': content_type || '' },
+        req_body: '',
+        resp_body: hexBody.length > 2048 ? `file:passthrough_${Date.now()}` : hexBody,
+        content_type: content_type || '',
+        content_length: hexBody.length / 2,
+        ts: Date.now() / 1000
+      };
+      
+      // 保存到队列
+      await c.lPush('traffic:queue', JSON.stringify(entry));
+      
+      // 如果是大文件，保存到磁盘
+      if (entry.resp_body.startsWith('file:')) {
+        const hash = entry.resp_body.split(':')[1];
+        const filePath = path.join(__dirname, 'data/traffic', `${hash}.bin`);
+        fs.writeFileSync(filePath, Buffer.from(hexBody, 'hex'));
+      }
+      
+      log(`[保存透传] ${sourceUrl} (${(hexBody.length / 2 / 1024).toFixed(1)}KB)`);
+      
+      // 重建索引
+      await sync.buildIndex();
+      
+      return json({ ok: true });
     }
 
     json({ error: 'not found' }, 404);
@@ -169,4 +254,26 @@ async function handleAPI(req, res) {
   }
 }
 
-http.createServer(handleAPI).listen(PORT, () => console.log(`Clone API: http://localhost:${PORT}`));
+http.createServer(handleAPI).listen(PORT, async () => {
+  console.log(`Clone API: http://localhost:${PORT}`);
+  const stats = await sync.buildIndex();
+  console.log(`自动建索引: ${stats.total} 条流量, ${stats.indexed} 个 URL`);
+
+  // 自动同步：监听 Redis 新流量
+  let lastLen = stats.total;
+  setInterval(async () => {
+    try {
+      const c = await sync.getClient();
+      const len = await c.lLen('traffic:queue');
+      if (len > lastLen) {
+        log(`检测到新流量: ${len - lastLen} 条，自动同步...`);
+        lastLen = len;
+        await sync.buildIndex();
+        if (state.sourceUrl) {
+          const r = await sync.fetchAndSync(state.sourceUrl);
+          log(`自动同步完成: ${JSON.stringify(r)}`);
+        }
+      }
+    } catch {}
+  }, 3000);
+});
